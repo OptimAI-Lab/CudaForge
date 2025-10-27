@@ -4,7 +4,7 @@ A training-free multi-agent workflow for CUDA kernel generation and optimization
 
 <img src="./pic/human_agents_v2.png">
 
-## Build Environment
+##🔧 Build Environment
 ```
 conda env create -f environment.yml
 ```
@@ -17,7 +17,7 @@ pip install openai
 pip install pandas
 pip install matplotlib
 ```
-## CUDA Toolkit and Build Tools
+##⚙️ CUDA Toolkit and Build Tools
 Please make sure that CUDA Toolkit and Ninja are correctly installed on your system.
 Both nvcc (the CUDA compiler) and Nsight Compute (NCU) should be accessible and have matching versions with your installed CUDA Toolkit.
 
