@@ -44,7 +44,7 @@ After this setup, you can run profiling commands such as sudo ncu without being 
 ## 🚀 Run
 Testing multiple tasks：
 ```bash
-python3 main.py KernelBench/level1  --first_n 100  --gpu "GPU Name"   --server_type openai   --model_name o3   --device 0   --round 10   --subproc_id 0
+python3 main.py KernelBench/level1  --first_n 100  --gpu "Quadro RTX 6000"   --server_type openai   --model_name o3   --device 0   --round 10   --subproc_id 0
 
 ```
 
