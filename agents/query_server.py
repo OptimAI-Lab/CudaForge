@@ -1,6 +1,8 @@
 from agents.llm_local import get_llm, GenerationConfig
 import os
 
+from utils.print_utils import print_bold
+
 TOGETHER_KEY = os.environ.get("TOGETHER_API_KEY")
 DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY")
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
@@ -9,6 +11,27 @@ SGLANG_KEY = os.environ.get("SGLANG_API_KEY")
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
 SAMBANOVA_API_KEY = os.environ.get("SAMBANOVA_API_KEY")
 FIREWORKS_API_KEY = os.environ.get("FIREWORKS_API_KEY")
+from typing import Optional
+
+
+def colorize_finish_reason(reason: Optional[str]) -> str:
+    colors = {
+        "stop": "\033[92m",  # Green
+        "end_turn": "\033[92m",
+        "length": "\033[93m",  # Yellow
+        "max_tokens": "\033[93m",
+        "content_filter": "\033[91m",  # Red
+        "stop_sequence": "\033[91m",
+        "tool_calls": "\033[94m",  # Blue
+        "function_call": "\033[94m",
+        "tool_use": "\033[94m",
+        "null": "\033[90m",  # Grey
+    }
+    reset_color = "\033[0m"
+    if reason is None:
+        return f"\033[90mFinish reason: unknown{reset_color}"
+    color = colors.get(reason, "\033[90m")  # Default to grey
+    return f"{color}Finish reason: {reason}{reset_color}"
 
 def query_server(
     prompt: str | list[dict],
@@ -25,6 +48,9 @@ def query_server(
     is_reasoning_model: bool = True,
     budget_tokens: int = 0,
     reasoning_effort: str = "medium",
+    log_path: Optional[str] = None,
+    call_type: str = "unknown",
+    round_idx: int = -1,
 ):
     match server_type:
         case "local":
@@ -123,6 +149,41 @@ def query_server(
             generation_config=generation_config,
         )
         response = model.generate_content(prompt)
+
+        # Usage logging
+        usage_metadata = getattr(response, 'usage_metadata', None)
+        if usage_metadata:
+            input_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
+            output_tokens = getattr(usage_metadata, 'candidates_token_count', 0)
+            total_tokens = getattr(usage_metadata, 'total_token_count', 0)
+            usage_str = f"Usage: In={input_tokens}, Out={output_tokens}, Total={total_tokens}"
+            print(usage_str)
+            if log_path and log_path != "":
+                try:
+                    import os
+                    import datetime
+                    file_exists = os.path.exists(log_path)
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        if not file_exists:
+                            f.write("timestamp,round_idx,call_type,input_tokens,output_tokens,total_tokens\n")
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        f.write(f"{timestamp},{round_idx},{call_type},{input_tokens},{output_tokens},{total_tokens}\n")
+                except Exception as e:
+                    print(f"Warning: Failed to write usage log to {log_path}: {e}")
+
+        # Finish reason
+        try:
+            candidates = getattr(response, 'candidates', [])
+            if candidates:
+                candidate = candidates[0]
+                finish_reason_obj = getattr(candidate, 'finish_reason', None)
+                finish_reason = getattr(finish_reason_obj, 'name', str(finish_reason_obj))
+                print(colorize_finish_reason(finish_reason))
+                if finish_reason in {"MAX_TOKENS", "length", "max_tokens"}:
+                    print(f"Warning: Output truncated due to max_tokens limit ({max_tokens})")
+        except Exception:
+            pass
+
         return response.text
 
     elif server_type == "anthropic":
@@ -146,7 +207,46 @@ def query_server(
                 top_k=top_k,
                 max_tokens=max_tokens,
             )
-        outputs = [choice.text for choice in response.content]
+        # Usage Logging
+        if hasattr(response, 'usage'):
+            input_tokens = getattr(response.usage, "input_tokens", None)
+            output_tokens = getattr(response.usage, "output_tokens", None)
+            total_tokens = getattr(response.usage, 'total_tokens', input_tokens + output_tokens
+                                   if input_tokens is not None and output_tokens is not None
+                                   else input_tokens if output_tokens is None
+                                   else output_tokens if input_tokens is None
+                                   else None)
+            usage_str = f"Usage: In={input_tokens}, Out={output_tokens}, Total={total_tokens}"
+            print(usage_str)
+            if log_path and log_path != "":
+                try:
+                    import os
+                    import datetime
+                    file_exists = os.path.exists(log_path)
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        if not file_exists:
+                            f.write("timestamp,round_idx,call_type,input_tokens,output_tokens,total_tokens\n")
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        f.write(f"{timestamp},{round_idx},{call_type},{input_tokens},{output_tokens},{total_tokens}\n")
+                except Exception as e:
+                    print(f"Warning: Failed to write usage log to {log_path}: {e}")
+
+        outputs = []
+        for block in response.content:
+            text = getattr(block, "text", None)
+            if text is not None:
+                outputs.append(text)
+                continue
+
+            block_type = getattr(block, "type", "unknown")
+            block_name = getattr(block, "name", "")
+            extra = f" ({block_name})" if block_name else ""
+            print(f"Skipping non-text {server_type} content block of type '{block_type}'{extra}")
+
+        finish_reason = getattr(response, "stop_reason", None)
+        print(colorize_finish_reason(finish_reason))
+        if finish_reason in {"length", "max_tokens"}:
+            print(f"Warning: Output truncated due to max_tokens limit ({max_tokens})")
 
     else:
         if isinstance(prompt, str):
@@ -172,6 +272,32 @@ def query_server(
                 max_tokens=max_tokens,
                 top_p=top_p,
             )
-        outputs = [choice.message.content for choice in response.choices]
+        outputs = []
+        for choice in response.choices:
+            print(colorize_finish_reason(choice.finish_reason))
+
+            if choice.finish_reason == "length":
+                print(f"Warning: Output truncated due to max_tokens limit ({max_tokens})")
+            outputs.append(choice.message.content)
+
+        if hasattr(response, 'usage') and response.usage:
+            input_tokens = getattr(response.usage, "prompt_tokens", getattr(response.usage, "input_tokens", 0))
+            output_tokens = getattr(response.usage, "completion_tokens", getattr(response.usage, "output_tokens", 0))
+            total_tokens = getattr(response.usage, 'total_tokens', input_tokens + output_tokens)
+
+            usage_str = f"Usage: In={input_tokens}, Out={output_tokens}, Total={total_tokens}"
+            print(usage_str)
+            if log_path and log_path != "":
+                try:
+                    import os
+                    import datetime
+                    file_exists = os.path.exists(log_path)
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        if not file_exists:
+                            f.write("timestamp,round_idx,call_type,input_tokens,output_tokens,total_tokens\n")
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        f.write(f"{timestamp},{round_idx},{call_type},{input_tokens},{output_tokens},{total_tokens}\n")
+                except Exception as e:
+                    print(f"Warning: Failed to write usage log to {log_path}: {e}")
 
     return outputs[0] if len(outputs) == 1 else outputs

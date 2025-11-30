@@ -182,7 +182,7 @@ def main():
     visible = os.environ.get("CUDA_VISIBLE_DEVICES")
     if TORCH_DEVICE == "cuda":
         num = torch.cuda.device_count()
-        idx = args.device-idx if num > 0 else 0
+        idx = args.device_idx if num > 0 else 0
         if idx < 0 or idx >= num:
             print(f"[warn] device-idx {idx} out of range (0..{num-1}), fallback to 0", file=sys.stderr)
             idx = 0

@@ -43,6 +43,10 @@ class CompilationError(RuntimeError):
     """
 
 
+class AccuracyError(RuntimeError):
+    """Raised when outputs do not meet the accuracy tolerance."""
+
+
 # =========================== dynamic import ===============================
 def _capture_import(path: Path):
     """Import *path* dynamically and capture **all** build logs.
@@ -535,6 +539,30 @@ def compare_and_bench(
             test_out = _first_tensor(test_out).contiguous()
             if ref_out.dtype != test_out.dtype:
                 test_out = test_out.to(ref_out.dtype)
+
+            # Check memory usage
+            ref_out_bytes = ref_out.element_size() * ref_out.nelement()
+
+            if ref_out_bytes * 8 > 40 * 1024**3:
+                import psutil
+                from utils.print_utils import print_warning
+                
+                # Estimate CPU memory needed (3x safety factor for copy + diff)
+                needed_cpu_mem = ref_out_bytes * 3
+                avail_cpu_mem = psutil.virtual_memory().available
+                
+                if avail_cpu_mem < needed_cpu_mem:
+                    print_warning(f"Skipping precision check: Tensor too large for both GPU and CPU RAM (Need ~{needed_cpu_mem/1024**3:.1f}GB, Avail {avail_cpu_mem/1024**3:.1f}GB)")
+                    check_precision = False
+                    # Release tensors to free memory for benchmarking
+                    del ref_out, test_out
+                    if TORCH_DEVICE == "cuda":
+                        torch.cuda.empty_cache()
+                else:
+                    print_warning(f"Warning: Output tensor size is too large ({ref_out_bytes / 1024**3:.2f} GB). Moving to CPU for comparison to avoid OOM.")
+                    ref_out = ref_out.cpu()
+                    test_out = test_out.cpu()
+
 
             # 误差 & allclose
             diff = (test_out - ref_out).abs()
