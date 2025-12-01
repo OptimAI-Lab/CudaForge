@@ -1,15 +1,6 @@
 run/
 
-**/__pycache__/
-*/__pycache__/
-**/*.pyc
-agents/__pycache__/
 *.txt/
-
-sh-files/
-
-context/
 .vscode/
 
-*_chat*.py
-*_error_*
+__pycache__/
